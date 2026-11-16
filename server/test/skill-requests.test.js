@@ -1,0 +1,86 @@
+import { test, before, after } from 'node:test';
+import assert from 'node:assert/strict';
+import mongoose from 'mongoose';
+import { MongoMemoryServer } from 'mongodb-memory-server';
+import request from 'supertest';
+import { createApp } from '../src/app.js';
+import { User, Payment, SkillRequest } from '../src/models.js';
+import { seed } from '../src/seed-data.js';
+import { guidance } from '../src/guidance.js';
+import { profileInput } from '../src/validation.js';
+const headers = { 'X-Requested-With': 'PathPilot' };
+let mongo, app, admin, student, other, studentId;
+before(async () => {
+  mongo = await MongoMemoryServer.create(); await mongoose.connect(mongo.getUri());
+  await seed(); await SkillRequest.init();
+  app = createApp({ jwtSecret: 'skill-request-tests-secret-at-least-32-chars', secure: false, rateLimit: 10000, authLimit: 10000 });
+  admin = request.agent(app); student = request.agent(app); other = request.agent(app);
+  await admin.post('/api/auth/login').set(headers).send({ email: 'admin@pathpilot.local', password: 'PilotLab2026!' }).expect(200);
+  const r = await student.post('/api/auth/register').set(headers).send({ name: 'New Learner', email: 'learner@test.local', password: 'LearnerTest2026!' }).expect(201);
+  studentId = r.body.id;
+  await other.post('/api/auth/register').set(headers).send({ name: 'Other Learner', email: 'otherlearner@test.local', password: 'LearnerTest2026!' }).expect(201);
+  for (const u of await User.find({ role: 'student' })) await Payment.create({ user: u._id, provider: 'test-fixture', status: 'paid', open: false, amount: 49900, currency: 'INR', durationDays: 30, expiresAt: new Date(Date.now() + 86400000) });
+});
+after(async () => { await mongoose.disconnect(); await mongo.stop(); });
+async function profile() {
+  const { _id, user, __v, createdAt, updatedAt, ...p } = (await student.get('/api/profile').expect(200)).body;
+  return profileInput.parse(p);
+}
+const question = { skill: 'React', prompt: 'Which feature manages component state?', options: ['useState', 'background', 'margin', 'padding'], correctIndex: 0, explanation: 'useState manages state in a React function component.', active: true };
+
+test('Empty profiles do not default to full-stack; roadmap follows explicit choice and can be changed', async () => {
+  const p = await profile();
+  const g = guidance(p, []);
+  assert.equal(g.recommendedCareerId, null); assert.equal(g.selectedCareerId, null);
+  assert.equal(g.actions.some(a => a.includes('For Full-stack')), false);
+  let report = (await student.get('/api/premium/report').expect(200)).body;
+  assert.equal(report.needsCareerChoice, true); assert.equal(report.career, null); assert.deepEqual(report.weeks, []);
+  p.careerFocus = 'data-analyst';
+  await student.put('/api/profile').set(headers).send(p).expect(200);
+  report = (await student.get('/api/premium/report')).body;
+  assert.equal(report.career, 'Data analyst'); assert.equal(report.weeks.length, 4);
+  const next = await profile(); next.careerFocus = 'security';
+  await student.put('/api/profile').set(headers).send(next).expect(200);
+  assert.equal((await student.get('/api/premium/report')).body.career, 'Cybersecurity analyst');
+  assert.equal(guidance({ ...p, careerFocus: '', interests: ['full-stack', 'data-analyst'] }, []).selectedCareerId, null);
+});
+test('Requested skill is private and unusable until admin approval, then admin questions enable tests and saved results', async () => {
+  const r = await student.post('/api/skill-requests').set(headers).send({ name: ' React ', domain: 'Software engineering', reason: 'I want to learn hooks and component state.' }).expect(201);
+  assert.equal(r.body.status, 'pending');
+  assert.equal((await other.get('/api/skill-requests')).body.length, 0);
+  await student.put('/api/admin/skill-requests/' + r.body._id).set(headers).send({ status: 'approved' }).expect(403);
+  await student.get('/api/admin/skill-requests').expect(403);
+  const p = await profile(); p.skills.push({ name: 'React', level: 20, development: 'Hooks' });
+  await student.put('/api/profile').set(headers).send(p).expect(400);
+  await admin.post('/api/admin/questions').set(headers).send(question).expect(400);
+  await student.post('/api/attempts').set(headers).send({ source: 'local', skill: 'React' }).expect(400);
+  await other.post('/api/skill-requests').set(headers).send({ name: 'react', domain: 'Software engineering', reason: 'A duplicate request from another student.' }).expect(409);
+  await admin.put('/api/admin/skill-requests/' + r.body._id).set(headers).send({ status: 'approved', reviewNote: 'Approved; I will add hooks practice.' }).expect(200);
+  await admin.put('/api/admin/skill-requests/' + r.body._id).set(headers).send({ status: 'rejected' }).expect(409);
+  assert.ok((await student.get('/api/catalog')).body.skillNames.includes('React'));
+  await student.put('/api/profile').set(headers).send(p).expect(200);
+  assert.equal((await student.get('/api/skill-requests')).body[0].questionCount, 0);
+  await student.post('/api/attempts').set(headers).send({ source: 'local', skill: 'React' }).expect(503);
+  await admin.post('/api/admin/questions').set(headers).send(question).expect(201);
+  assert.equal((await student.get('/api/skill-requests')).body[0].questionCount, 1);
+  const attempt = (await student.post('/api/attempts').set(headers).send({ source: 'local', skill: 'React' }).expect(201)).body;
+  assert.equal(attempt.questions[0].correctIndex, undefined);
+  await student.post('/api/attempts/' + attempt._id + '/submit').set(headers).send({ answers: [0] }).expect(200);
+  const stats = (await student.get('/api/analytics')).body;
+  assert.ok(stats.bySkill.some(s => s.skill === 'React'));
+});
+test('Request validation, rejection, and subscription boundaries cannot be bypassed', async () => {
+  const input = { name: 'New Testing Skill', domain: 'Software quality', reason: 'I want to learn additional testing methods.' };
+  await request(app).post('/api/skill-requests').set(headers).send(input).expect(401);
+  await student.post('/api/skill-requests').send(input).expect(403);
+  await student.post('/api/skill-requests').set(headers).send({ ...input, status: 'approved' }).expect(400);
+  await student.post('/api/skill-requests').set(headers).send({ ...input, domain: 'invalid' }).expect(400);
+  await student.post('/api/skill-requests').set(headers).send({ ...input, name: 'javascript' }).expect(409);
+  const r = (await student.post('/api/skill-requests').set(headers).send(input).expect(201)).body;
+  await admin.put('/api/admin/skill-requests/' + r._id).set(headers).send({ status: 'rejected', reviewNote: 'Please request a specific technology.' }).expect(200);
+  assert.equal((await student.get('/api/catalog')).body.skillNames.includes(input.name), false);
+  await Payment.updateMany({ user: studentId }, { $set: { expiresAt: new Date(0) } });
+  await student.get('/api/skill-requests').expect(403);
+  await student.post('/api/skill-requests').set(headers).send({ ...input, name: 'Another Skill' }).expect(403);
+  await admin.get('/api/admin/skill-requests').expect(200);
+});

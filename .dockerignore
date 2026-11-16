@@ -1,0 +1,10 @@
+node_modules
+**/node_modules
+.env
+**/.angular
+**/dist
+test-results
+playwright-report
+.cache
+.git
+work

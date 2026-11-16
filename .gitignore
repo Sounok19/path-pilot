@@ -1,0 +1,14 @@
+node_modules/
+.env
+dist/
+.angular/
+coverage/
+playwright-report/
+test-results/
+.cache/
+*.log
+
+# Local database binary, persistent data and private configuration backups
+.local/
+.env.*
+!.env.example

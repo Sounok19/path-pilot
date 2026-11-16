@@ -1,0 +1,13 @@
+.env
+.env.*
+node_modules
+**/node_modules
+**/.angular
+test-results
+playwright-report
+.git
+.cache
+*.zip
+
+# Local database binary, persistent data and private configuration backups
+.local/

@@ -1,0 +1,25 @@
+{
+  "name": "@path-pilot/client",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "start": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File ../scripts/start-angular.ps1",
+    "build": "ng build"
+  },
+  "dependencies": {
+    "@angular/common": "20.3.32",
+    "@angular/compiler": "20.3.32",
+    "@angular/core": "20.3.32",
+    "@angular/forms": "20.3.32",
+    "@angular/platform-browser": "20.3.32",
+    "@angular/router": "20.3.32",
+    "rxjs": "~7.8.2",
+    "tslib": "^2.8.1"
+  },
+  "devDependencies": {
+    "@angular/build": "20.3.37",
+    "@angular/cli": "20.3.37",
+    "@angular/compiler-cli": "20.3.32",
+    "typescript": "~5.9.3"
+  }
+}
