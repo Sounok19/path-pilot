@@ -1,5 +1,7 @@
 # Path Pilot
 
+[**Open the live Path Pilot demo**](https://path-pilot-rouge.vercel.app)
+
 Path Pilot is a student career guidance app built for a Software Engineering Lab. It uses Angular, Express, Node.js and MongoDB.
 
 Students can keep a learning log, choose a career direction, take practice tests and get a four-week roadmap. Administrators can view enrollments and payment records, review proposed skills and publish practice questions. An active subscription unlocks the student tools. The lab uses a simulated checkout with success, failure and cancellation outcomes.
